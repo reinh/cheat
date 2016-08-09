@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+
+set -e
+
+info () {
+    printf "  [ \033[00;34m..\033[0m ] $1"
+}
+
+success () {
+    printf "\r\033[2K  [ \033[00;32mok\033[0m ] $1\n"
+}
+
+CONFIG_DIR="$HOME/.config/cheat"
+REPOS_DIR="$CONFIG_DIR/repos"
+SHEETS_DIR="$CONFIG_DIR/sheets"
+
+mkdir -p "$CONFIG_DIR" "$REPOS_DIR" "$SHEETS_DIR"
+
+function projectName() {
+    echo "$1" | rev | cut -d/ -f1 -f2 |rev | sed 's/\.git$//'
+}
+
+function syncRepo() {
+    local repo="$1"
+    local pth="$2"
+    local prj="$3"
+
+    local dir="$REPOS_DIR/$prj"
+
+    if [[ -d "$dir" ]]; then
+        info "Updating $repo"
+        (
+            cd "$dir"
+            git pull -q
+        )
+        success "Updated $repo"
+    else
+        info "Checking out $repo"
+        git clone -q "$repo" "$REPOS_DIR/$prj"
+        success "Checked out $repo"
+    fi
+}
+
+function linkRepo() {
+    local pth="$1"
+    local prj="$2"
+    local dir=$"$REPOS_DIR/$prj"
+    if [[ -n "$pth" ]]; then
+        dir="$dir/$pth"
+    fi
+
+    find "$dir" -maxdepth 1 -type f | while read sheet; do
+        local name
+        name=${sheet##*/}
+        name=${name%.*}
+        [[ "$name" = "LICENSE" ]] && continue
+        \rm "$SHEETS_DIR/$name"
+        \ln -s "$sheet" "$SHEETS_DIR/$name"
+    done
+}
+
+function doList() {
+    ls $SHEETS_DIR
+    exit 0
+}
+
+function doSync() {
+    echo ''
+    while read -r line; do
+        IFS="|" read -ra REPO <<< "$line"
+        local cheat_name=${REPO[0]}
+        local cheat_path=${REPO[1]}
+
+        local cheat_project
+        cheat_project=$(projectName $cheat_name)
+
+        syncRepo "$cheat_name" "$cheat_path" "$cheat_project"
+        linkRepo "$cheat_path" "$cheat_project"
+    done < "$CONFIG_DIR/config"
+    exit 0
+}
+
+while getopts :lsg: OPT; do
+    case $OPT in
+        l)
+
+            CMD="list"
+            ;;
+        s)
+            CMD="sync"
+            ;;
+        g)
+            CMD="grep"
+            GREP_ARG=${OPTARG}
+           ;;
+        *)
+            echo "usage: ${0##*/} -l"
+            echo "       ${0##*/} -s"
+            echo "       ${0##*/} -g PATTERN"
+            exit 2
+    esac
+done
+shift $(( OPTIND - 1 ))
+OPTIND=1
+
+case "$CMD" in
+    list)
+        doList
+        ;;
+    sync)
+        doSync
+        ;;
+    grep)
+        grep "$GREP_ARG" "$SHEETS_DIR"/*
+        ;;
+    *)
+        cat "$SHEETS_DIR/$1"
+esac
