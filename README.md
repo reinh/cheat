@@ -23,7 +23,7 @@ https://github.com/chrisallenlane/cheat.git|cheat/cheatsheets
 cheat -h        # Usage information. Also --help.
 cheat -s        # Sync cheat sources from git repos. Also --sync.
 cheat -l        # List cheat sheets. Also --list
-cheat <sheet>   # Print a cheat sheet
+cheat ascii     # Print a cheat sheet
 cheat -g ascii  # Grep sheets for "ascii". Also --grep.
 ```
 
