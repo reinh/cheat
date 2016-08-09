@@ -8,7 +8,7 @@ checkout/pull, displays them, and lets you grep them.
 Sources are defined in `~/.config/cheat/config`, one github repository per line.
 If the sheets are located in a subdirectory, add the path after a `|`.
 
-Example:
+### Example: ###
 
 ```
 https://github.com/ticki/sheets.git
