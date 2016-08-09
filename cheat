@@ -1,118 +1,151 @@
 #!/usr/bin/env bash
+#
+# Manage text cheat sheets
 
-set -e
+set -eu -o pipefail
 
-info () {
-    printf "  [ \033[00;34m..\033[0m ] $1"
+declare -r USAGE="cheat <sheet>
+cheat -l | --list
+cheat -s | --sync
+cheat (-g | --grep) <pattern>"
+
+die()     { >&2 echo "$1"; exit 1; }
+usage()   { die "${USAGE}"; }
+info()    { printf "  [ \033[00;34m..\033[0m ] %s" "$1"; }
+update()  { printf "\r\033[2K  [ \033[00;34m..\033[0m ] %s" "$1"; }
+success() { printf "\r\033[2K  [ \033[00;32mok\033[0m ] %s\n" "$1"; }
+
+declare -r CONFIG_DIR="${HOME}/.config/cheat"
+declare -r REPOS_DIR="${CONFIG_DIR}/repos"
+declare -r SHEETS_DIR="${CONFIG_DIR}/sheets"
+
+# `git pull` or `git checkout` a github repo
+#
+# Args:
+#   - repo name
+#   - project name (github user and repo name)
+sync_repo() {
+  local repo="$1" project="$2" dir="${REPOS_DIR}/${project}"
+
+  if [[ -d "${dir}" ]]; then
+    info "Fetching"
+    (cd "${dir}" && git pull -q)
+    success "Fetched"
+  else
+    info "Checking out"
+    git clone -q "${repo}" "${REPOS_DIR}/${project}"
+    success "Checked out"
+  fi
 }
 
-success () {
-    printf "\r\033[2K  [ \033[00;32mok\033[0m ] $1\n"
+# Symlink the cheat sheets from the repo into $SHEETS_DIR
+#
+# Args:
+#   - project name
+#   - (optional) path to sheets from repository root
+link_repo() {
+  local dir="${REPOS_DIR}/$1" count=0 sheet name
+
+  # Add the sheets path if given in the config
+  [[ -n "$2" ]] && dir="${dir}/$2"
+
+  info "Linking"
+  while read -r sheet; do
+    name=${sheet##*/} # basename
+    name=${name%.*}   # without extension
+
+    ((count++))
+    ln -sf "${sheet}" "${SHEETS_DIR}/${name}"
+    update "Linking ${count} sheets"
+  done < <(find "${dir}" \
+                -maxdepth 1 \
+                -type f \
+                -not \(     -name '.*' \
+                        -or -name '_*' \
+                        -or -name 'LICENSE*' \))
+  success "Linked ${count} sheets"
 }
 
-CONFIG_DIR="$HOME/.config/cheat"
-REPOS_DIR="$CONFIG_DIR/repos"
-SHEETS_DIR="$CONFIG_DIR/sheets"
+# Synchronize cheat sheet repos
+#
+# Parse the config file ($CONFIG_DIR/config) then synchronize and link each
+# repo.
+#
+do_sync() {
+  while read -r line; do
+    IFS="|" read -ra REPO <<< "${line}"
+    local repo=${REPO[0]} _path=${REPO[1]:-}
+    [[ -n "${repo}" ]] || die "error: invalid config"
 
-mkdir -p "$CONFIG_DIR" "$REPOS_DIR" "$SHEETS_DIR"
+    local project
+    project="$(echo "${repo}" | rev | cut -d/ -f1 -f2 | rev | sed 's/\.git$//')"
 
-function projectName() {
-    echo "$1" | rev | cut -d/ -f1 -f2 |rev | sed 's/\.git$//'
-}
-
-function syncRepo() {
-    local repo="$1"
-    local pth="$2"
-    local prj="$3"
-
-    local dir="$REPOS_DIR/$prj"
-
-    if [[ -d "$dir" ]]; then
-        info "Updating $repo"
-        (
-            cd "$dir"
-            git pull -q
-        )
-        success "Updated $repo"
-    else
-        info "Checking out $repo"
-        git clone -q "$repo" "$REPOS_DIR/$prj"
-        success "Checked out $repo"
-    fi
-}
-
-function linkRepo() {
-    local pth="$1"
-    local prj="$2"
-    local dir=$"$REPOS_DIR/$prj"
-    if [[ -n "$pth" ]]; then
-        dir="$dir/$pth"
-    fi
-
-    find "$dir" -maxdepth 1 -type f | while read sheet; do
-        local name
-        name=${sheet##*/}
-        name=${name%.*}
-        [[ "$name" = "LICENSE" ]] && continue
-        \rm "$SHEETS_DIR/$name"
-        \ln -s "$sheet" "$SHEETS_DIR/$name"
-    done
-}
-
-function doList() {
-    ls $SHEETS_DIR
-    exit 0
-}
-
-function doSync() {
     echo ''
-    while read -r line; do
-        IFS="|" read -ra REPO <<< "$line"
-        local cheat_name=${REPO[0]}
-        local cheat_path=${REPO[1]}
-
-        local cheat_project
-        cheat_project=$(projectName $cheat_name)
-
-        syncRepo "$cheat_name" "$cheat_path" "$cheat_project"
-        linkRepo "$cheat_path" "$cheat_project"
-    done < "$CONFIG_DIR/config"
-    exit 0
+    echo "${repo}"
+    sync_repo "${repo}" "${project}"
+    link_repo  "${project}" "${_path}"
+  done < "${CONFIG_DIR}/config"
+  exit 0
 }
 
-while getopts :lsg: OPT; do
-    case $OPT in
-        l)
+main() {
+  local cmd grep_arg sheet
 
-            CMD="list"
-            ;;
-        s)
-            CMD="sync"
-            ;;
-        g)
-            CMD="grep"
-            GREP_ARG=${OPTARG}
-           ;;
-        *)
-            echo "usage: ${0##*/} -l"
-            echo "       ${0##*/} -s"
-            echo "       ${0##*/} -g PATTERN"
-            exit 2
+  [[ $# = 0 ]] && usage
+
+  if ! mkdir -p "${REPOS_DIR}" "${SHEETS_DIR}" ; then
+    die "fatal: unable to create config directory $CONFIG_DIR"
+  fi
+
+
+  while [[ $# != 0 ]]; do
+    case "$1" in
+      -l|--list)
+        cmd="list"
+        break
+        ;;
+      -s|--sync)
+        cmd="sync"
+        break
+        ;;
+      -g|--grep)
+        cmd="grep"
+        grep_arg="$2"
+        [[ -z "${grep_arg}" ]] && usage
+        break
+        ;;
+      -*)
+        usage
+        ;;
+      *)
+        cmd="show"
+        sheet="$1"
+        ;;
     esac
-done
-shift $(( OPTIND - 1 ))
-OPTIND=1
+    shift
+  done
 
-case "$CMD" in
+  case "${cmd}" in
     list)
-        doList
-        ;;
+      ls "${SHEETS_DIR}"
+      ;;
     sync)
-        doSync
-        ;;
+      do_sync
+      ;;
     grep)
-        grep "$GREP_ARG" "$SHEETS_DIR"/*
-        ;;
-    *)
-        cat "$SHEETS_DIR/$1"
-esac
+      find "${SHEETS_DIR}" -name "*${grep_arg}*" -exec basename {} \;
+      [[ -z "$(find "${SHEETS_DIR}" -name "*${grep_arg}*" -print -quit)" ]] || echo ''
+
+      grep --color=always "${grep_arg}" "${SHEETS_DIR}"/* | sed "s#${SHEETS_DIR}/##"
+      ;;
+    show)
+      _path="${SHEETS_DIR}/${sheet}"
+      if [[ -f "${_path}" ]]; then
+        cat "${_path}"
+      else
+        die "error: sheet ${sheet} not found"
+      fi
+  esac
+}
+
+main "$@"
