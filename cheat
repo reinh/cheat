@@ -5,6 +5,7 @@
 set -eu -o pipefail
 
 declare -r USAGE="cheat <sheet>
+cheat -h | --help
 cheat -l | --list
 cheat -s | --sync
 cheat (-g | --grep) <pattern>"
